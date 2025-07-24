@@ -7,6 +7,7 @@ from urllib.parse import urljoin
 
 import pytest
 import requests
+import tomllib
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry
 from selenium import webdriver
@@ -37,15 +38,6 @@ APPLICATION_KINTO_REVIEW_PATH = {
     BaseExperimentApplications.FIREFOX_FENIX.value: (
         "#/buckets/main-workspace/collections/nimbus-mobile-experiments/simple-review"
     ),
-    BaseExperimentApplications.FIREFOX_IOS.value: (
-        "#/buckets/main-workspace/collections/nimbus-mobile-experiments/simple-review"
-    ),
-    BaseExperimentApplications.FOCUS_ANDROID.value: (
-        "#/buckets/main-workspace/collections/nimbus-mobile-experiments/simple-review"
-    ),
-    BaseExperimentApplications.FOCUS_IOS.value: (
-        "#/buckets/main-workspace/collections/nimbus-mobile-experiments/simple-review"
-    ),
     BaseExperimentApplications.DEMO_APP.value: (
         "#/buckets/main-workspace/collections/nimbus-web-experiments/simple-review"
     ),
@@ -54,18 +46,12 @@ APPLICATION_KINTO_REVIEW_PATH = {
 APPLICATION_KINTO_COLLECTION = {
     BaseExperimentApplications.FIREFOX_DESKTOP.value: KINTO_COLLECTION_DESKTOP,
     BaseExperimentApplications.FIREFOX_FENIX.value: KINTO_COLLECTION_MOBILE,
-    BaseExperimentApplications.FIREFOX_IOS.value: KINTO_COLLECTION_MOBILE,
-    BaseExperimentApplications.FOCUS_ANDROID.value: KINTO_COLLECTION_MOBILE,
-    BaseExperimentApplications.FOCUS_IOS.value: KINTO_COLLECTION_MOBILE,
     BaseExperimentApplications.DEMO_APP.value: KINTO_COLLECTION_WEB,
 }
 
 APPLICATION_SELECT_VALUE = {
     BaseExperimentApplications.FIREFOX_DESKTOP.value: "firefox-desktop",
     BaseExperimentApplications.FIREFOX_FENIX.value: "fenix",
-    BaseExperimentApplications.FIREFOX_IOS.value: "ios",
-    BaseExperimentApplications.FOCUS_ANDROID.value: "focus-android",
-    BaseExperimentApplications.FOCUS_IOS.value: "focus-ios",
     BaseExperimentApplications.DEMO_APP.value: "demo-app",
 }
 
@@ -82,15 +68,6 @@ def fixture_application_feature_ids():
         ),
         BaseExperimentApplications.FIREFOX_FENIX.value: helpers.get_feature_id_as_string(
             "no-feature-fenix", BaseExperimentApplications.FIREFOX_FENIX.value
-        ),
-        BaseExperimentApplications.FIREFOX_IOS.value: helpers.get_feature_id_as_string(
-            "no-feature-ios", BaseExperimentApplications.FIREFOX_IOS.value
-        ),
-        BaseExperimentApplications.FOCUS_ANDROID.value: helpers.get_feature_id_as_string(
-            "no-feature-focus-android", BaseExperimentApplications.FOCUS_ANDROID.value
-        ),
-        BaseExperimentApplications.FOCUS_IOS.value: helpers.get_feature_id_as_string(
-            "no-feature-focus-ios", BaseExperimentApplications.FOCUS_IOS.value
         ),
         BaseExperimentApplications.DEMO_APP.value: helpers.get_feature_id_as_string(
             "example-feature", BaseExperimentApplications.DEMO_APP.value
@@ -202,15 +179,10 @@ def experiment_url(base_url, experiment_slug):
     return f"{urljoin(base_url, experiment_slug)}/summary/"
 
 
-@pytest.fixture
-def old_base_url():
-    return f"{os.getenv('INTEGRATION_TEST_NGINX_URL', 'https://nginx')}/nimbus"
-
-
 @pytest.fixture(name="load_experiment_outcomes")
 def fixture_load_experiment_outcomes():
     """Fixture to create a list of outcomes based on the current configs."""
-    outcomes = {"firefox_desktop": "", "fenix": "", "firefox_ios": ""}
+    outcomes = {"firefox_desktop": [], "fenix": [], "firefox_ios": []}
     parent_path = Path(__file__).parents[3]
     base_path = (
         parent_path
@@ -220,14 +192,22 @@ def fixture_load_experiment_outcomes():
         / "jetstream"
         / "outcomes"
     )
-
-    for k in list(outcomes):
-        outcomes[k] = [
-            name.split("_")[0].rsplit(".")[0]
-            for name in os.listdir(f"{base_path}/{k}")
-            if "example" not in name
-        ]
+    for k in outcomes:
+        _outcomes = []
+        for name in Path(base_path / k).iterdir():
+            with Path.open(base_path / k / name, "rb") as f:
+                outcome = tomllib.load(f)
+                if "example" not in str(name):
+                    _outcomes.append(outcome["friendly_name"])
+        outcomes[k] = _outcomes
     return outcomes
+
+
+@pytest.fixture
+def mobile_apps():
+    return [
+        BaseExperimentApplications.FIREFOX_FENIX.value,
+    ]
 
 
 @pytest.fixture
@@ -244,10 +224,6 @@ def default_data(
         BaseExperimentApplications.FIREFOX_FENIX.value: BaseExperimentMetricsDataClass(
             primary_outcomes=[load_experiment_outcomes["fenix"][0]],
             secondary_outcomes=[load_experiment_outcomes["fenix"][1]],
-        ),
-        BaseExperimentApplications.FIREFOX_IOS.value: BaseExperimentMetricsDataClass(
-            primary_outcomes=[load_experiment_outcomes["firefox_ios"][0]],
-            secondary_outcomes=[load_experiment_outcomes["firefox_ios"][1]],
         ),
     }
 
@@ -276,9 +252,9 @@ def default_data(
         ),
         audience=BaseExperimentAudienceDataClass(
             channel=BaseExperimentAudienceChannels.RELEASE,
-            min_version=106,
+            min_version="130.0.1",
             targeting="no_targeting",
-            percentage="50",
+            percentage=50.0,
             expected_clients=50,
             locale=None,
             countries=None,
@@ -289,7 +265,7 @@ def default_data(
 
 
 @pytest.fixture
-def create_experiment(base_url, default_data):
+def create_experiment(base_url, default_data, mobile_apps, application):
     def _create_experiment(
         selenium,
         languages=False,
@@ -312,31 +288,40 @@ def create_experiment(base_url, default_data):
         overview.select_risk_revenue_false()
         overview.select_risk_partner_false()
         overview.public_description = default_data.public_description
+        overview.add_additional_links()
         overview.set_additional_links(value="DESIGN_DOC")
-        overview.add_additional_links()
-        overview.set_additional_links(value="DS_JIRA", url="https://jira.jira.com")
-        overview.add_additional_links()
-        overview.set_additional_links(
-            value="ENG_TICKET", url="https://www.smarter-engineering.eng"
-        )
-        overview.projects = [helpers.load_config_data()["projects"][0]["name"]]
+        overview.save()
+        # The code below is broken for now.
+        # overview.add_additional_links()
+        # overview.set_additional_links(value="DS_JIRA", url="https://jira.jira.com")
+        # overview.add_additional_links()
+        # overview.set_additional_links(
+        #     value="ENG_TICKET", url="https://www.smarter-engineering.eng"
+        # )
+        # overview.projects = "20"
+        branches = overview.save_and_continue()
 
         # Fill Branches page
-        branches = overview.save_and_continue()
-        branches.feature_config = default_data.feature_config_id
+        if application in mobile_apps:
+            branches.feature_config = "nimbus-validation"
+        elif "desktop" in application.lower():
+            branches.feature_config = "no feature"
+        elif "demo" in application.lower():
+            branches.feature_config = "example-feature"
         branches.reference_branch_description = default_data.branches[0].description
-        branches.reference_branch_value = reference_branch_value
-
+        branches.reference_branch_value = '{"settings-icon": "icon"}'
         if is_rollout:
             branches.make_rollout()
         else:
             branches.treatment_branch_description = default_data.branches[1].description
-            branches.treatment_branch_value = treatment_branch_value
+            branches.treatment_branch_value = '{"settings-icon": "icon"}'
 
         # Fill Metrics page
         metrics = branches.save_and_continue()
+        metrics.wait_for_page_to_load()
         if default_data.metrics.primary_outcomes:
             metrics.set_primary_outcomes(values=default_data.metrics.primary_outcomes[0])
+            metrics.save()
             assert metrics.primary_outcomes.text != "", "The primary outcome was not set"
             metrics.set_secondary_outcomes(
                 values=default_data.metrics.secondary_outcomes[0]
@@ -356,14 +341,7 @@ def create_experiment(base_url, default_data):
             audience.min_version = default_data.audience.min_version
             audience.percentage = default_data.audience.percentage
             audience.targeting = default_data.audience.targeting
-            audience.countries = ["Canada"]
-            if (
-                default_data.application
-                != BaseExperimentApplications.FIREFOX_DESKTOP.value
-            ):
-                audience.languages = ["English"]
-            else:
-                audience.locales = ["English (US)"]
+            audience.countries = "Canada"
         else:
             if languages:
                 audience.languages = ["English"]

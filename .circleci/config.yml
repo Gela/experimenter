@@ -230,7 +230,7 @@ jobs:
     working_directory: ~/experimenter
     environment:
       FIREFOX_CHANNEL: release
-      PYTEST_ARGS: -m nimbus_ui -n 1 --reruns 1 --base-url https://nginx/nimbus/
+      PYTEST_ARGS: -m nimbus_ui -n 4 --reruns 1 --base-url https://nginx/nimbus/
       PYTEST_BASE_URL: https://nginx/nimbus/
     steps:
       - checkout
